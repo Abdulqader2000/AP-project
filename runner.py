@@ -25,9 +25,6 @@ class Card(pygame.sprite.Sprite):
         self.surf = self.back # this is the main surface of the card and its initially will be the back
         self.animation = {'status': 'stopped', 'current_side': self.back}
 
-    # def __eq__(self, other):
-    #     '''the tow card are equals if they have same image'''
-    #     return self.image == other.image
     def same_image(self, other):
         '''the tow card are equals if they have same image'''
         return self.image == other.image
@@ -39,6 +36,9 @@ class Card(pygame.sprite.Sprite):
     def closed(self):
         '''check if the card surf shows the back'''
         return self.surf is self.back
+    
+    def animation_running(self):
+        return self.animation['status'] != 'stopped'
 
     def open(self):
         '''flip the card to show its face'''
@@ -104,6 +104,9 @@ def reset(card_list):
     for card in card_list:
         card.close()
     random.shuffle(card_list)
+    
+def animation_stopped(card_list):
+    return all(not card.animation_running() for card in card_list)
 
 
 
@@ -133,10 +136,11 @@ flip_timer = pygame.USEREVENT + 1
 
 by_row = upper_mid_factors(len(card_list))
 
-
+clock = pygame.time.Clock()
 
 # GAME LOOP
 while True:
+    
     
     #CHECK FOR EVENTS:
     
@@ -159,23 +163,11 @@ while True:
                     # flip the card and append to "to_compare" list to compere with the other card
                     card.open()
                     to_compare.append(card)
-                    # if there is another card in "to_compere" list then we compere them
-                    if len(to_compare) == 2:
-                        # compere the two cards
-                        if to_compare[0].same_image(to_compare[1]): # if they equal this mean the player got a point 
-                            # clear "to_compere" list to use it with another tow cards
-                            to_compare.clear() 
-                        # if they are not equal then we set timer wait some of time before flipping the two cards back 
-                        else: 
-                            # after 1000 ms the "flip_timer will be true"
-                            # TODO we need to insure that the timer will not start until the two card are openned
-                            pygame.time.set_timer(flip_timer, 1000, loops=1)
-
                     break
         
         # flip the two openned cards back and clear "to_compere" list when time is over
         if event.type == flip_timer:
-            for card in to_compare:
+            for card in to_compare[:2]:
                 card.close()
             to_compare.clear()
 
@@ -184,6 +176,13 @@ while True:
             if all_opened(card_list):
                 reset(card_list)
 
+
+    if len(to_compare) == 2 and animation_stopped(to_compare):
+        if to_compare[0].same_image(to_compare[1]):
+            to_compare.clear()
+        else:
+            to_compare.append('this to make the condition above false (~˘▾˘)~')
+            pygame.time.set_timer(flip_timer, 1000, 1)
                 
     #DISPLAY CARDS:
     screen.fill(background_color)
@@ -209,3 +208,4 @@ while True:
     # TODO decide which best to contain the cards (list or group)
     pygame.sprite.Group(*card_list).update()
     pygame.display.update()
+    clock.tick(1000)
