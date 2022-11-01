@@ -2,7 +2,9 @@ import pygame
 import sys
 import random
 import os
+from enum import Enum
 
+pygame.init()
 
 SCREEN_SIZE = SCREEN_WIDTH, SCREEN_HEIGHT = 1000, 600
 CARD_SIZE = CARD_WIDTH, CARD_HEIGHT = 100, 100
@@ -82,12 +84,38 @@ class Card(pygame.sprite.Sprite):
                     self.animation['status'] = 'stopped'
 
 
+class Button(pygame.sprite.Sprite):
+    def __init__(self, text, size, background_color=(255, 255, 255), text_color=(0, 0, 0), font=pygame.font.SysFont('arial', 20), flag=None):
+        super().__init__()
+        self.flag = flag
+        self.surf = pygame.Surface(size)
+        self.surf.fill(background_color)
+        self.text = font.render(text, True, (0, 0, 0))
+        self.surf.blit(self.text, (self.surf.get_width()/2 - self.text.get_width()/2, self.surf.get_height()/2 - self.text.get_height()/2))
+
+
+class Page(Enum):
+    start = 1
+    choose_level = 2
+    game = 3
+    result = 4
+
+
+class Mode(Enum):
+    online = 1
+    local = 2
+
+
+class Level(Enum):
+    easy = 8
+    medium = 16
+    hard = 20
 
 
 def upper_mid_factors(number):
     '''this methods is used to determine how many card should be in one line'''
     factors = []
-    for i in range(2, number//2+1):
+    for i in range(1, number+1):
         if number % i == 0:
             factors. append(i)
 
@@ -109,38 +137,76 @@ def animation_stopped(card_list):
     return all(not card.animation_running() for card in card_list)
 
 
+def display_surfaces(surfaces_list):
+    #gap between cards
+    gap = 20
+    by_row =  upper_mid_factors(len(surfaces_list))
+    surf_width = surfaces_list[0].surf.get_width() if type(surfaces_list[0]) != Card else CARD_WIDTH
+    surf_height = surfaces_list[0].surf.get_height()
+    # center start point from left
+    origin_left = (SCREEN_WIDTH - (by_row * (surf_width + gap) - gap)) / 2 + surf_width / 2
+    # center start point from top
+    origin_top = (SCREEN_HEIGHT - (len(surfaces_list) / by_row * (surf_height + gap) - gap)) / 2  + surf_height / 2
+
+    # put every card in position
+    for i, card in enumerate(surfaces_list):
+        x = origin_left + (surf_width + gap) * (i % by_row)
+        y = origin_top + \
+            (surf_height + gap) * (i // by_row)
+            
+        card.rect = card.surf.get_rect(center=(x, y))
+
+        screen.blit(card.surf, card.rect)
 
 
-# initiate the game
-pygame.init()
+def prepare_cards():
+    # loop in the files that in the photos folder
+    for filename in list(os.scandir(face_images_path))[:level.value//2]:
+        # appent two cards for each photo
+        card_list.append(Card(filename.path))
+        card_list.append(Card(filename.path))
+    # shuffle the cards
+    random.shuffle(card_list)
+
+
 
 # set the screen to the specified size and color
 screen = pygame.display.set_mode(SCREEN_SIZE)
 
+# creat custom event for keep last card openned for sometime(specified in the game loop)
+flip_timer = pygame.USEREVENT + 1
+
+clock = pygame.time.Clock()
+
 # creat a list for card and append the photos in photos folder to it
 card_list = []
-
-# loop in the files that in the photos folder
-for filename in os.scandir(face_images_path):
-    # appent two cards for each photo
-    card_list.append(Card(filename.path))
-    card_list.append(Card(filename.path))
-# shuffle the cards
-random.shuffle(card_list)
 
 # this list is for compare two cards when they openned
 to_compare = []
 
-# creat custom event for keep last card openned for sometime(specified in the game loop)
-flip_timer = pygame.USEREVENT + 1
+# flags
+page = Page.start
+level = None
+mode = None
+turn = None
 
-by_row = upper_mid_factors(len(card_list))
+player1_score = 0
+player2_score = 0
 
-clock = pygame.time.Clock()
+# start page buttons
+start_page_buttons = []
+start_page_buttons.append(Button('Play Online', (200, 100), flag=Mode.online))
+start_page_buttons.append(Button('Play local', (200, 100), flag=Mode.local))
+
+# choose level page buttons
+level_page_buttons = []
+level_page_buttons.append(Button('easy', (100, 100), flag=Level.easy))
+level_page_buttons.append(Button('medium', (100, 100), flag=Level.medium))
+level_page_buttons.append(Button('hard', (100, 100), flag=Level.hard))
+
 
 # GAME LOOP
 while True:
-    
     
     #CHECK FOR EVENTS:
     
@@ -148,22 +214,42 @@ while True:
         # exit when user clicks close window botton
         if event.type == pygame.QUIT:
             sys.exit()
+            
 
         # handle mouse click event
-        if event.type == pygame.MOUSEBUTTONDOWN and len(to_compare) < 2: # will ignore clicks when to_compare list is full (has 2 cards)
-            # get postion of mouse (tuple)
+        if event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = pygame.mouse.get_pos()
-            # check which cardN that is being clicked
-            for card in card_list:
-                # ignore openned card
-                if card.openned():
-                    continue
-                # check if the card collides with mouse -> clicked one
-                if card.rect.collidepoint(mouse_pos):
-                    # flip the card and append to "to_compare" list to compere with the other card
-                    card.open()
-                    to_compare.append(card)
-                    break
+            
+            if page is Page.start:
+                for button in start_page_buttons:
+                    if button.rect.collidepoint(mouse_pos):
+                        mode = button.flag
+                        page = Page.choose_level
+            
+            
+            elif page is Page.choose_level:
+                for button in level_page_buttons:
+                    if button.rect.collidepoint(mouse_pos):
+                        level = button.flag
+                        page = Page.game
+                        prepare_cards()
+                        
+            
+            
+            elif page is Page.game and len(to_compare) < 2: # will ignore clicks when to_compare list is full (has 2 cards)
+                # get postion of mouse (tuple)
+                mouse_pos = pygame.mouse.get_pos()
+                # check which cardN that is being clicked
+                for card in card_list:
+                    # ignore openned card
+                    if card.openned():
+                        continue
+                    # check if the card collides with mouse -> clicked one
+                    if card.rect.collidepoint(mouse_pos):
+                        # flip the card and append to "to_compare" list to compere with the other card
+                        card.open()
+                        to_compare.append(card)
+                        break
         
         # flip the two openned cards back and clear "to_compere" list when time is over
         if event.type == flip_timer:
@@ -177,31 +263,20 @@ while True:
                 reset(card_list)
 
 
-    if len(to_compare) == 2 and animation_stopped(to_compare):
-        if to_compare[0].same_image(to_compare[1]):
-            to_compare.clear()
-        else:
-            to_compare.append('this to make the condition above false (~˘▾˘)~')
-            pygame.time.set_timer(flip_timer, 1000, 1)
-                
-    #DISPLAY CARDS:
-    screen.fill(background_color)
+    # DISPLAY CONTENT
+
+    if page is Page.start:
+        screen.fill(background_color)
+        display_surfaces(start_page_buttons)
+        
     
-    gap = 20 #gap between cards
-    # center start point from left
-    origin_left = (SCREEN_WIDTH - (by_row * (CARD_WIDTH + gap) - gap)) / 2 + CARD_WIDTH / 2
-    # center start point from top
-    orgin_right = (SCREEN_HEIGHT - (len(card_list) / by_row * (CARD_HEIGHT + gap) - gap)) / 2  + CARD_HEIGHT / 2
-
-    # put every card in position
-    for i, card in enumerate(card_list):
-        x = origin_left + (CARD_WIDTH + gap) * (i % by_row)
-        y = orgin_right + \
-            (CARD_HEIGHT + gap) * (i // by_row)
-            
-        card.rect = card.surf.get_rect(center=(x, y))
-
-        screen.blit(card.surf, card.rect)
+    if page is Page.choose_level:
+        screen.fill(background_color)
+        display_surfaces(level_page_buttons)
+        
+    if page is Page.game:
+        screen.fill(background_color)
+        display_surfaces(card_list)
 
 
     # update display in every loop
@@ -209,3 +284,11 @@ while True:
     pygame.sprite.Group(*card_list).update()
     pygame.display.update()
     clock.tick(1000)
+
+
+    if len(to_compare) == 2 and animation_stopped(to_compare):
+        if to_compare[0].same_image(to_compare[1]):
+            to_compare.clear()
+        else:
+            to_compare.append('this to make the condition above false (~˘▾˘)~')
+            pygame.time.set_timer(flip_timer, 1000, 1)
