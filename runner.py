@@ -1,5 +1,4 @@
 import pygame
-import sys
 import random
 import os
 from enum import Enum
@@ -11,6 +10,8 @@ CARD_SIZE = CARD_WIDTH, CARD_HEIGHT = 100, 100
 background_color = (0, 127, 255)
 face_images_path = 'photos/cards'
 back_image_path = 'photos/covers/cover.jpg'
+font = pygame.font.SysFont('arial', 20)
+font_large = pygame.font.SysFont('arial', 30)
 
 class Card(pygame.sprite.Sprite):
 
@@ -22,7 +23,7 @@ class Card(pygame.sprite.Sprite):
         self.image = image # save image to compere it with other cards
         self.face = pygame.image.load(image).convert() # load the given image to card face
         self.face = pygame.transform.scale(self.face, CARD_SIZE) # insure that the card in specified size
-        self.back = pygame.image.load(back_image_path) # load the cover image to card back
+        self.back = pygame.image.load(back_image_path).convert() # load the cover image to card back
         self.back = pygame.transform.scale(self.back, CARD_SIZE)
         self.surf = self.back # this is the main surface of the card and its initially will be the back
         self.animation = {'status': 'stopped', 'current_side': self.back}
@@ -90,8 +91,9 @@ class Button(pygame.sprite.Sprite):
         self.flag = flag
         self.surf = pygame.Surface(size)
         self.surf.fill(background_color)
-        self.text = font.render(text, True, (0, 0, 0))
+        self.text = font.render(text, True, text_color)
         self.surf.blit(self.text, (self.surf.get_width()/2 - self.text.get_width()/2, self.surf.get_height()/2 - self.text.get_height()/2))
+
 
 
 class Page(Enum):
@@ -112,6 +114,10 @@ class Level(Enum):
     hard = 20
 
 
+class Player(Enum):
+    player1 = 'player 1'
+    player2 = 'player 2'
+
 def upper_mid_factors(number):
     '''this methods is used to determine how many card should be in one line'''
     factors = []
@@ -127,12 +133,13 @@ def all_opened(card_list):
     return all([card.openned() for card in card_list])
 
 
-def reset(card_list):
-    '''flip back all the cards and shuffle them'''
-    for card in card_list:
-        card.close()
-    random.shuffle(card_list)
-    
+# def reset():
+#     '''flip back all the cards and shuffle them'''
+#     for card in card_list:
+#         card.close()
+#     random.shuffle(card_list)
+
+
 def animation_stopped(card_list):
     return all(not card.animation_running() for card in card_list)
 
@@ -157,9 +164,23 @@ def display_surfaces(surfaces_list):
         card.rect = card.surf.get_rect(center=(x, y))
 
         screen.blit(card.surf, card.rect)
+        
+    if page is Page.game:
+        score1_text = font.render(f'{Player.player1.value}: {player1_score}', True, (0, 255, 0) if turn is Player.player1 else (255, 255, 255))
+        text1_rect = score1_text.get_rect()
+        score2_text = font.render(f'{Player.player2.value}: {player2_score}', True, (0, 255, 0) if turn is Player.player2 else (255, 255, 255))
+        text2_rect = score2_text.get_rect()
+        
+        text1_rect.left = origin_left
+        text2_rect.right = SCREEN_WIDTH - origin_left
+        text1_rect.bottom = text2_rect.bottom = origin_top - 70
+        
+        screen.blit(score1_text, text1_rect)
+        screen.blit(score2_text, text2_rect)
 
 
 def prepare_cards():
+    #TODO : adding numbers
     # loop in the files that in the photos folder
     for filename in list(os.scandir(face_images_path))[:level.value//2]:
         # appent two cards for each photo
@@ -167,6 +188,34 @@ def prepare_cards():
         card_list.append(Card(filename.path))
     # shuffle the cards
     random.shuffle(card_list)
+
+
+def initiate_game():
+    global card_list
+    global to_compare
+    global page
+    global level
+    global mode
+    global turn
+    global result
+    global player1_score
+    global player2_score
+    
+    # creat a list for card and append the photos in photos folder to it
+    card_list = []
+
+    # this list is for compare two cards when they openned
+    to_compare = []
+
+    # flags
+    page = Page.start
+    level = None
+    mode = None
+    turn = Player.player1
+    result = None
+
+    player1_score = 0
+    player2_score = 0
 
 
 
@@ -177,21 +226,6 @@ screen = pygame.display.set_mode(SCREEN_SIZE)
 flip_timer = pygame.USEREVENT + 1
 
 clock = pygame.time.Clock()
-
-# creat a list for card and append the photos in photos folder to it
-card_list = []
-
-# this list is for compare two cards when they openned
-to_compare = []
-
-# flags
-page = Page.start
-level = None
-mode = None
-turn = None
-
-player1_score = 0
-player2_score = 0
 
 # start page buttons
 start_page_buttons = []
@@ -204,6 +238,11 @@ level_page_buttons.append(Button('easy', (100, 100), flag=Level.easy))
 level_page_buttons.append(Button('medium', (100, 100), flag=Level.medium))
 level_page_buttons.append(Button('hard', (100, 100), flag=Level.hard))
 
+exit_button = Button('Exit', (50, 30))
+exit_button_rect = exit_button.surf.get_rect(center=(30, 30))
+
+initiate_game()
+
 
 # GAME LOOP
 while True:
@@ -213,14 +252,17 @@ while True:
     for event in pygame.event.get():
         # exit when user clicks close window botton
         if event.type == pygame.QUIT:
-            sys.exit()
+            exit()
             
 
         # handle mouse click event
         if event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = pygame.mouse.get_pos()
             
-            if page is Page.start:
+            if exit_button_rect.collidepoint(mouse_pos):
+                initiate_game()
+            
+            elif page is Page.start:
                 for button in start_page_buttons:
                     if button.rect.collidepoint(mouse_pos):
                         mode = button.flag
@@ -237,9 +279,6 @@ while True:
             
             
             elif page is Page.game and len(to_compare) < 2: # will ignore clicks when to_compare list is full (has 2 cards)
-                # get postion of mouse (tuple)
-                mouse_pos = pygame.mouse.get_pos()
-                # check which cardN that is being clicked
                 for card in card_list:
                     # ignore openned card
                     if card.openned():
@@ -256,11 +295,13 @@ while True:
             for card in to_compare[:2]:
                 card.close()
             to_compare.clear()
+            turn = Player.player2 if turn is Player.player1 else Player.player1 
+            
 
-        # reset the game if finished and space key has been clicked
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-            if all_opened(card_list):
-                reset(card_list)
+        # # reset the game if finished and space key has been clicked
+        # if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+        #     if all_opened(card_list):
+        #         reset(card_list)
 
 
     # DISPLAY CONTENT
@@ -270,13 +311,20 @@ while True:
         display_surfaces(start_page_buttons)
         
     
-    if page is Page.choose_level:
+    elif page is Page.choose_level:
         screen.fill(background_color)
+        screen.blit(exit_button.surf, exit_button_rect)
         display_surfaces(level_page_buttons)
         
-    if page is Page.game:
+    elif page is Page.game:
         screen.fill(background_color)
+        screen.blit(exit_button.surf, exit_button_rect)
         display_surfaces(card_list)
+        if result:
+            result_surf = font_large.render(result, True, (255, 255, 255))
+            result_rect = result_surf.get_rect(center=(SCREEN_WIDTH/2, 40))
+            screen.blit(result_surf, result_rect)
+            
 
 
     # update display in every loop
@@ -286,8 +334,22 @@ while True:
     clock.tick(1000)
 
 
-    if len(to_compare) == 2 and animation_stopped(to_compare):
+    if len(to_compare) == 2 and animation_stopped(to_compare) and not result:
         if to_compare[0].same_image(to_compare[1]):
+            if turn is Player.player1:
+                player1_score += 1
+            else: 
+                player2_score += 1
+            
+            if all_opened(card_list):
+                if player1_score > player2_score:
+                    result = f'{Player.player1.value} won'
+                elif player1_score < player2_score:
+                    result = f'{Player.player2.value} won'
+                else:
+                    result = 'tie!'
+            else:
+                turn = Player.player2 if turn is Player.player1 else Player.player1 
             to_compare.clear()
         else:
             to_compare.append('this to make the condition above false (~˘▾˘)~')
