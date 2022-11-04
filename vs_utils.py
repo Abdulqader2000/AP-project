@@ -3,6 +3,7 @@ Utility module that makes project-specific functions/classes/variables easy to a
 This is not required.
 '''
 
+import sys
 import cv2 as cv
 import numpy as np
 import gzip
@@ -69,147 +70,167 @@ def str_to_frame(image_str):
     return frm
 
 
-def broadcast(connection, stop):
-    cap = cv.VideoCapture(0)
-    if not cap.isOpened():
-        print("Cannot open camera")
-        exit()
-        
-    while True:
-        # Capture frame-by-frame (image-by-image) from the webcam
-        ret, frame = cap.read()
-        # if frame is read correctly ret is True
-        if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
-            break
-        
-        image_str = frame_to_str(frame)
-        
-        image_response = {RESPONSE: IMAGE, DATA: image_str}
-        connection.sendall((json.dumps(image_response) + '\n').encode())
-        time.sleep(.1)
-        if stop:
-            break
-        
-    cap.release()
-    cv.destroyAllWindows()
-
-
-def carry(socket, stop):
-
-    while True:
-        image_response = ''
-        while not image_response.endswith('\n'):
-            image_response += socket.recv(1024).decode()
-
-        image_response = json.loads(image_response.strip())
-        image_str = image_response[DATA]
-
-        frm = str_to_frame(image_str)
-
-        cv.imshow('Frame', frm)
-        # To quit, press q
-        if cv.waitKey(1) == ord('q'):
-            break
-
-    cv.destroyAllWindows()
-
-
-def handle_requests(broadcaster, client):
-    connection = client[0]
-
-    status_response = {
-        RESPONSE: STATUS,
-        STREAMING_MODE: BROADCASTING,
-        NUMBER_OF_CLIENTS: len(broadcaster.clients),
-        HANDOVER: 'no'
-    }
-    connection.sendall(json.dumps(status_response).encode())
-
-    streamStart_request = json.loads(connection.recv(1024).decode())
-    if streamStart_request[REQUEST] == STREAM_START:
-        if len(broadcaster.clients) < 3:  # TODO
-            connection.sendall(json.dumps({RESPONSE: STREAM_STARTING}
-                                          ).encode())
-            broadcaster.clients.append(client[1])
-        else:
-            connection.sendall(json.dumps({RESPONSE: OVERLOADED}
-                                          ).encode())
-            exit()
-
-    stop = False
-    thread = threading.Thread(target=broadcast, args=(connection, stop))
-
-    thread.start()
-
-    StreamStop_Requeststop = connection.recv(1024)
-    StreamStop_Requeststop = json.loads(StreamStop_Requeststop.decode())
-
-    if StreamStop_Requeststop[REQUEST] == STREAM_STOP:
-        stop = True
-        thread.join()
-        connection.sendall(json.dumps({RESPONSE: STREAM_STOPPED}).encode())
-        connection.close()
-
-
-def handle_responses(socket):
-    status_response = json.loads(socket.recv(1024).decode())
-    socket.sendall(json.dumps({REQUEST: STREAM_START}).encode())
-    data = socket.recv(1024).decode()
-    streamstarting_response = json.loads(data)
-
-    stop = False
-    thread = threading.Thread(target=carry, args=(socket, stop))
-
-    thread.start()
-
-    input('Enter anything to stop streaming: ')
-
-    socket.sendall(json.dumps({REQUEST: STREAM_STOP}).encode())
-
-    stop = True
-    thread.join()
-    socket.recv(1024)
-
-    socket.close()
 
     # classess...
 
 
 class Broadcaster:
-    def __init__(self):
-        HOST = '0.0.0.0'
-        PORT = 5002
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # type: ignore
-        self.socket.bind((HOST, PORT))
-        self.socket.listen()
-        self.clients = []
+    def __init__(self, host, port):
+        # HOST = '0.0.0.0'
+        # PORT = 5002
+        self.broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # type: ignore
+        self.broadcast_socket.bind((host, port))
+        self.broadcast_socket.listen()
+        self.connections = []
+        self.stopped = False
+    
+
+    def broadcasting(self):
+        cap = cv.VideoCapture(0)
+        if not cap.isOpened():
+            print("Cannot open camera")
+            exit()
+            
+        while True:
+            # Capture frame-by-frame (image-by-image) from the webcam
+            ret, frame = cap.read()
+            # if frame is read correctly ret is True
+            if not ret:
+                print("Can't receive frame (stream end?). Exiting ...")
+                break
+            
+            image_str = frame_to_str(frame)
+            
+            image_response = {RESPONSE: IMAGE, DATA: image_str}
+            
+            for connection, _ in self.connections:
+                connection.sendall((json.dumps(image_response) + '\n').encode())
+                
+            time.sleep(.1)
+            if self.stopped:
+                break
+            
+        cap.release()
+        cv.destroyAllWindows()
 
 
-class Carier:
+    def handle_requests(self, connection_with_address):
+        connection = connection_with_address[0]
+
+        status_response = {
+            RESPONSE: STATUS,
+            STREAMING_MODE: BROADCASTING,
+            NUMBER_OF_CLIENTS: len(self.connections),
+            HANDOVER: 'no'
+        }
+
+        connection.sendall(json.dumps(status_response).encode())
+
+        streamStart_request = json.loads(connection.recv(1024).decode())
+        if streamStart_request[REQUEST] == STREAM_START:
+            if len(self.connections) < 3:
+                connection.sendall(json.dumps({RESPONSE: STREAM_STARTING}
+                                            ).encode())
+                self.connections.append(connection_with_address)
+            else:
+                connection.sendall(json.dumps({RESPONSE: OVERLOADED}
+                                            ).encode())
+                exit()
+        
+        StreamStop_Requeststop = connection.recv(1024)
+        StreamStop_Requeststop = json.loads(StreamStop_Requeststop.decode())
+
+        if StreamStop_Requeststop[REQUEST] == STREAM_STOP:
+            connection.sendall((json.dumps({RESPONSE: STREAM_STOPPED})+'\n').encode())
+            self.connections.remove(connection_with_address)
+            connection.close()
+            print('closed')
+    
+    
+    def start(self):
+        broacasting_thread = threading.Thread(target=self.broadcasting)
+        broacasting_thread.start()
+        
+        while True:
+            connection_with_address = self.broadcast_socket.accept()
+            handling_request_thread = threading.Thread(
+                target=self.handle_requests, args=(connection_with_address,))
+            handling_request_thread.start()
+
+
+
+class Carier(Broadcaster):
     def __init__(self, HOST, PORT):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # type: ignore
-        self.socket.connect((HOST, PORT))
-        self.clients = []
+        self.carry_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # type: ignore
+        self.carry_socket.connect((HOST, PORT))
+        self.carry_thread = threading.Thread(target=self.carry)
+        self.accept_connections_thread = threading.Thread(target=self.accept_connections)
+        
+        super().__init__(*self.carry_socket.getsockname())
+
+    def carry(self):
+        while True:
+            message = ''
+            while not message.endswith('\n'):
+                message += self.carry_socket.recv(1024).decode()
+                
+            
+            for connection, _ in self.connections:
+                connection.sendall(message.encode())
+
+            try:
+                message = json.loads(message.strip())
+            except:
+                continue
+            
+            if message[RESPONSE] == STREAM_STOPPED:
+                cv.destroyAllWindows()
+                self.carry_socket.close()
+                exit()
+            
+            image_str = message[DATA]
+            
+            frm = str_to_frame(image_str)
+            
+            try:
+                cv.imshow('Frame', frm)
+            except:
+                pass
+
+            # To quit, press q
+            if cv.waitKey(1) == ord('q'):
+                pass
 
 
+    def handle_responses(self):
+        status_response = json.loads(self.carry_socket.recv(1024).decode())
+        self.carry_socket.sendall(json.dumps({REQUEST: STREAM_START}).encode())
+        data = self.carry_socket.recv(1024).decode()
+        streamstarting_response = json.loads(data)
 
-mode = input(
-    'choose a video streaming mode:\n(1) Broadcasting mode\n(2) carrier mode\n')
-
-if mode == '1':
-
-    broadcaster = Broadcaster()
-    conn, _ = broadcaster.socket.accept()
-    broadcast(conn, False)
+        if streamstarting_response[RESPONSE] == OVERLOADED:
+            print('server is full, try later')
+            exit()
+        
+        self.carry_thread.start()
 
 
+    def accept_connections(self):
+        while True:
+            try:
+                connection_with_address = self.broadcast_socket.accept()
+            except OSError:
+                break
+            handling_request_thread = threading.Thread(
+                target=self.handle_requests, args=(connection_with_address,))
+            handling_request_thread.start()
 
-elif mode == '2':
-    host, port = input('enter the server IP/port: ').strip().split('/')
 
-    # carier = vs.Carier(host, port)
-    socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    socket.connect((host, int(port)))
+    def start(self):
+        self.handle_responses()
+        self.accept_connections_thread.start()
 
-    carry(socket, False)
+
+    def stop(self):
+        self.broadcast_socket.close()
+        self.carry_socket.sendall(json.dumps({REQUEST: STREAM_STOP}).encode())

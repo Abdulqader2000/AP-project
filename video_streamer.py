@@ -8,20 +8,16 @@ mode = input(
 
 if mode == '1':
 
-    broadcaster = vs.Broadcaster()
-    broadcaster.socket
+    broadcaster = vs.Broadcaster('127.0.0.1', 5000)
+    broadcaster.start()
 
-    while True:
-        client = broadcaster.socket.accept()
-        thread = threading.Thread(
-            target=vs.handle_requests, args=(broadcaster, client))
-        thread.start()
 
 elif mode == '2':
     host, port = input('enter the server IP/port: ').strip().split('/')
 
-    # carier = vs.Carier(host, port)
-    socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    socket.connect((host, int(port)))
-
-    vs.handle_responses(socket)
+    
+    carrier = vs.Carier(host, int(port))
+    print(carrier.carry_socket.getsockname())
+    carrier.start()
+    input('Enter anything to stop: ')
+    carrier.stop()
