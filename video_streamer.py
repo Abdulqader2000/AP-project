@@ -1,23 +1,86 @@
-import threading
-import json
 import vs_utils as vs
-import socket
-
-mode = input(
-    'choose a video streaming mode:\n(1) Broadcasting mode\n(2) carrier mode\n')
-
-if mode == '1':
-
-    broadcaster = vs.Broadcaster('127.0.0.1', 5000)
-    broadcaster.start()
+import os
+import msvcrt
+import re
+from random import choice
 
 
-elif mode == '2':
-    host, port = input('enter the server IP/port: ').strip().split('/')
+def safe_input(prompt:str, possibilities:list):
+    error_input_messages = [
+        'invalid!',
+        'maybe you need glasses',
+        'you should be samrter than that',
+        'read this carefully'
+    ]
+    while True:
+        if prompt:
+            print(prompt)
+        pressed = msvcrt.getch().decode("utf-8").lower()
+        if pressed in possibilities:
+            return pressed
+        else: 
+            print(choice(error_input_messages))
 
+def ip_input(prompt:str):
+    while True:
+        ip = input(prompt).strip()
+        if re.fullmatch(r'^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$', ip):
+            return ip
+        print('invalid ip address')
+
+def port_input(prompt:str):
+    while True:
+        port = input(prompt).strip()
+        if port.isnumeric():
+            return int(port)
+        print('port number consist only of numbers!')
+
+
+
+
+def main():
     
-    carrier = vs.Carier(host, int(port))
-    print(carrier.carry_socket.getsockname())
-    carrier.start()
-    input('Enter anything to stop: ')
-    carrier.stop()
+    mode = safe_input('choose a video streaming mode:\n(1) Broadcasting mode\n(2) carrier mode\n', ['1', '2'])
+
+    if mode == '1':
+        files = list(os.scandir('videos'))
+        if files:
+            on_demand = safe_input('choose (1) live or (2) on-demand', ['1', '2'])
+        else:
+            on_demand = '1'
+        
+        if on_demand == '1':
+            broadcaster = vs.Broadcaster(vs.DEFAULT_IP, vs.DEFAULT_PORT, capture_from=0)
+            
+        elif on_demand == '2':
+            print('choose from the list:')
+            for index, file in enumerate(files, start=1):
+                print(f'{index}- {file.name}')
+                
+            file_index = int(safe_input('', list(str(i) for i in range(1, len(files) + 1)))) - 1
+            broadcaster = vs.Broadcaster(vs.DEFAULT_IP, vs.DEFAULT_PORT, capture_from=files[file_index].path)
+
+        broadcaster.start()
+
+
+    elif mode == '2':
+        while True:
+            host = ip_input('Enter server IP address: ')
+            port = port_input('Enter server port number: ')
+            
+            try:
+                carrier = vs.Carier(host, int(port))
+            except _ as e:
+                print(e.message)
+                if safe_input('Can\'t connect.\n Enter (1) to try again with differnt IP/port numbers (2) to exit', ['1', '2']) == '1':
+                    continue
+                else: 
+                    exit()
+            break
+
+        carrier.start()
+        safe_input('Enter (q) to stop:\n', ['q'])
+        carrier.stop()
+
+if __name__ == '__main__':
+    main()
