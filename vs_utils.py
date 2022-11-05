@@ -11,7 +11,6 @@ import socket
 import json
 import time
 import threading
-from typing import Union
 
 
 # Resolution: 320x240
@@ -83,6 +82,8 @@ def receive_with_newline(receiver:socket.socket):
     return json.loads(str_message[:-1])
 
 
+
+
     # classess...
 
 class Broadcaster:
@@ -91,8 +92,7 @@ class Broadcaster:
         self.broadcast_socket.bind((host, port))
         self.broadcast_socket.listen()
         self.connections = []
-        # TODO : Add machanism to stop server
-        self.stopped = False 
+        self.accept_connections_thread = threading.Thread(target=self.accept_connections)
         self.capture_from = capture_from
         self.mode = mode
         
@@ -132,8 +132,6 @@ class Broadcaster:
                     self.connections.remove(connection)
                 
             time.sleep(.1)
-            if self.stopped:
-                break
             
         cap.release()
         cv.destroyAllWindows()
@@ -151,10 +149,10 @@ class Broadcaster:
 
         send_with_newline(connection, status_response)
         
-        streamStart_request = receive_with_newline(connection)
+        streamstart_request = receive_with_newline(connection)
         
         
-        if streamStart_request[REQUEST] == STREAM_START:
+        if streamstart_request[REQUEST] == STREAM_START:
             if len(self.connections) < 3:
                 streamstarting_response = {RESPONSE: STREAM_STARTING}
                 send_with_newline(connection, streamstarting_response)
@@ -182,16 +180,21 @@ class Broadcaster:
             self.connections.remove(connection_with_address)
             connection.close()
     
+    def accept_connections(self):
+        while True:
+            try:
+                connection_with_address = self.broadcast_socket.accept()
+            except OSError:
+                break
+            handling_request_thread = threading.Thread(
+                target=self.handle_requests, args=(connection_with_address,))
+            handling_request_thread.start()
+    
     
     def start(self):
         broacasting_thread = threading.Thread(target=self.broadcasting)
         broacasting_thread.start()
-        
-        while True:
-            connection_with_address = self.broadcast_socket.accept()
-            handling_request_thread = threading.Thread(
-                target=self.handle_requests, args=(connection_with_address,))
-            handling_request_thread.start()
+        self.accept_connections_thread.start()
 
 
 
@@ -200,7 +203,7 @@ class Carier(Broadcaster):
         self.carry_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # type: ignore
         self.carry_socket.connect((HOST, PORT))
         self.carry_thread = threading.Thread(target=self.carry)
-        self.accept_connections_thread = threading.Thread(target=self.accept_connections)
+        self.stopped = False 
         
         super().__init__(*self.carry_socket.getsockname(), mode=CARRIER, capture_from=None)
 
@@ -215,6 +218,7 @@ class Carier(Broadcaster):
             except json.decoder.JSONDecodeError:
                 continue
 
+            
             for connection, _ in self.connections:
                 send_with_newline(connection, message)
 
@@ -224,6 +228,7 @@ class Carier(Broadcaster):
                 for connection, _ in self.connections:
                     connection.close()
                 self.carry_socket.close()
+                self.broadcast_socket.close()
                 if not self.stopped:
                     print('the server stopped')
                 exit()
@@ -238,7 +243,10 @@ class Carier(Broadcaster):
                 pass
 
             # To quit, press q
-            cv.waitKey(1)
+            if cv.waitKey(1) == ord('q'):
+                self.stopped = True
+                streamstop_request = {REQUEST: STREAM_STOP}
+                send_with_newline(self.carry_socket, streamstop_request)
         
 
 
@@ -248,36 +256,19 @@ class Carier(Broadcaster):
         send_with_newline(self.carry_socket, streamstart_request)
         
         streamstarting_response = receive_with_newline(self.carry_socket)
+        return streamstarting_response
 
-        if streamstarting_response[RESPONSE] == OVERLOADED:
-            print(streamstarting_response)
-            # TODO: safe exit
-            exit()
-        
-        self.carry_thread.start()
-
-
-    def accept_connections(self):
-        while True:
-            try:
-                connection_with_address = self.broadcast_socket.accept()
-            except OSError:
-                break
-            handling_request_thread = threading.Thread(
-                target=self.handle_requests, args=(connection_with_address,))
-            # handling_request_thread.daemon = True
-            handling_request_thread.start()
 
 
     def start(self):
-        self.handle_responses()
-        # self.accept_connections_thread.daemon = True
+        streamstarting_response = self.handle_responses()
+        if streamstarting_response[RESPONSE] == OVERLOADED:
+            return streamstarting_response[CLIENTS]
+
+        self.carry_thread.start()
         self.accept_connections_thread.start()
 
 
     def stop(self):
-        self.stopped =True
+        self.stopped = True
         self.broadcast_socket.close()
-        if self.carry_thread.is_alive():
-            streamstop_request = {REQUEST: STREAM_STOP}
-            send_with_newline(self.carry_socket, streamstop_request)

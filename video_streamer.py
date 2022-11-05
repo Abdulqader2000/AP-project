@@ -15,7 +15,10 @@ def safe_input(prompt:str, possibilities:list):
     while True:
         if prompt:
             print(prompt)
-        pressed = msvcrt.getch().decode("utf-8").lower()
+        try:    
+            pressed = msvcrt.getch().decode("utf-8").lower()
+        except UnicodeDecodeError:
+            continue
         if pressed in possibilities:
             return pressed
         else: 
@@ -50,17 +53,23 @@ def main():
             on_demand = '1'
         
         if on_demand == '1':
-            broadcaster = vs.Broadcaster(vs.DEFAULT_IP, vs.DEFAULT_PORT, capture_from=0)
-            
+            capture_from = 0
         elif on_demand == '2':
             print('choose from the list:')
             for index, file in enumerate(files, start=1):
                 print(f'{index}- {file.name}')
                 
             file_index = int(safe_input('', list(str(i) for i in range(1, len(files) + 1)))) - 1
-            broadcaster = vs.Broadcaster(vs.DEFAULT_IP, vs.DEFAULT_PORT, capture_from=files[file_index].path)
+            capture_from = files[file_index].path
+            
+        try:
+            broadcaster = vs.Broadcaster(vs.DEFAULT_IP, vs.DEFAULT_PORT, capture_from)
+        except OSError:
+            print('the server already running')
+            exit()
 
         broadcaster.start()
+        print('running...')
 
 
     elif mode == '2':
@@ -69,18 +78,22 @@ def main():
             port = port_input('Enter server port number: ')
             
             try:
-                carrier = vs.Carier(host, int(port))
-            except _ as e:
-                print(e.message)
+                carrier = vs.Carier(host, port)
+            except ConnectionRefusedError:
                 if safe_input('Can\'t connect.\n Enter (1) to try again with differnt IP/port numbers (2) to exit', ['1', '2']) == '1':
                     continue
                 else: 
                     exit()
-            break
 
-        carrier.start()
-        safe_input('Enter (q) to stop:\n', ['q'])
-        carrier.stop()
+            start =  carrier.start()
+            if start:
+                print('the sever is full, you car try connect to one of these clints:')
+                for client in start:
+                    print(f'- {client["ip"]}/{client["port"]}')
+            else:
+                break
+
+        print('press (q) to stop')
 
 if __name__ == '__main__':
     main()
