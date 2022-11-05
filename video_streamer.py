@@ -1,28 +1,19 @@
 import vs_utils as vs
 import os
-import msvcrt
 import re
 from random import choice
 
 
 def safe_input(prompt:str, possibilities:list):
-    error_input_messages = [
-        'invalid!',
-        'maybe you need glasses',
-        'you should be samrter than that',
-        'read this carefully'
-    ]
     while True:
-        if prompt:
-            print(prompt)
         try:    
-            pressed = msvcrt.getch().decode("utf-8").lower()
+            pressed = input(prompt)
         except UnicodeDecodeError:
             continue
         if pressed in possibilities:
             return pressed
         else: 
-            print(choice(error_input_messages))
+            print('Invalid!')
 
 def ip_input(prompt:str):
     while True:
@@ -44,17 +35,16 @@ def port_input(prompt:str):
 def main():
     
     mode = safe_input('choose a video streaming mode:\n(1) Broadcasting mode\n(2) carrier mode\n', ['1', '2'])
-
+    capture_from = 0
+    
     if mode == '1':
         files = list(os.scandir('videos'))
         if files:
-            on_demand = safe_input('choose (1) live or (2) on-demand', ['1', '2'])
+            on_demand = safe_input('choose (1) live or (2) on-demand: ', ['1', '2'])
         else:
             on_demand = '1'
         
-        if on_demand == '1':
-            capture_from = 0
-        elif on_demand == '2':
+        if on_demand == '2':
             print('choose from the list:')
             for index, file in enumerate(files, start=1):
                 print(f'{index}- {file.name}')
@@ -70,6 +60,9 @@ def main():
 
         broadcaster.start()
         print('running...')
+        if safe_input('Entern (q) to stop: ', ['q']):
+            broadcaster.stop()
+            print('closed')
 
 
     elif mode == '2':
@@ -80,7 +73,7 @@ def main():
             try:
                 carrier = vs.Carier(host, port)
             except ConnectionRefusedError:
-                if safe_input('Can\'t connect.\n Enter (1) to try again with differnt IP/port numbers (2) to exit', ['1', '2']) == '1':
+                if safe_input('Can\'t connect.\n Enter (1) to try again with differnt IP/port numbers (2) to exit: ', ['1', '2']) == '1':
                     continue
                 else: 
                     exit()
@@ -93,7 +86,11 @@ def main():
             else:
                 break
 
-        print('press (q) to stop')
+        # if safe_input('Entern (q) to stop', ['q']):
+        #     carrier.stop()
+        #     print('closed')
+        print('press (q) on window to stop')
+
 
 if __name__ == '__main__':
     main()

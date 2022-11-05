@@ -9,8 +9,9 @@ import gzip
 import base64
 import socket
 import json
+from threading import Thread
+from datetime import datetime
 import time
-import threading
 
 
 # Resolution: 320x240
@@ -92,34 +93,36 @@ class Broadcaster:
         self.broadcast_socket.bind((host, port))
         self.broadcast_socket.listen()
         self.connections = []
-        self.accept_connections_thread = threading.Thread(target=self.accept_connections)
+        self.broacasting_thread = Thread(target=self.broadcasting)
+        self.accept_connections_thread = Thread(target=self.accept_connections)
         self.capture_from = capture_from
         self.mode = mode
-        
+        self.stopped = False 
 
 
     def broadcasting(self):
         cap = cv.VideoCapture(self.capture_from)
-        
-        # TODO: handle this error
+        fourcc = cv.VideoWriter_fourcc(*'XVID')
+        record = cv.VideoWriter(f'videos/{datetime.now().strftime(r"%m-%d-%Y_%H&%M")}.avi', fourcc, 20.0, (640,  480))
+
         if not cap.isOpened():
-            print("Cannot open camera")
+            Thread(target=self.stop).start()
             exit()
             
         while True:
-            # Capture frame-by-frame (image-by-image) from the webcam
             ret, frame = cap.read()
-            # if frame is read correctly ret is True
             if not ret:
-                # TODO: when this happen not all threads will stop
-                print("Can't receive frame (stream end?). Exiting ...")
-                break
+                cap = cv.VideoCapture(self.capture_from)
+                continue
             
             if self.capture_from:
                 resized_frame = cv.resize(
         frame, (RESOLUTION_WIDTH, RESOLUTION_HEIGHT))
                 cv.imshow('Frame', resized_frame)
-                cv.waitKey(1)
+                if cv.waitKey(1) == ord('q'):
+                    Thread(target=self.stop).start()
+            else:
+                record.write(frame)
             
             image_str = frame_to_str(frame)
             
@@ -129,11 +132,16 @@ class Broadcaster:
                 try:
                     send_with_newline(connection, image_response)
                 except ConnectionResetError:
-                    self.connections.remove(connection)
+                    continue
                 
             time.sleep(.1)
             
+            if self.stopped:
+                break
+            
         cap.release()
+        record.release()
+    
         cv.destroyAllWindows()
 
 
@@ -151,34 +159,32 @@ class Broadcaster:
         
         streamstart_request = receive_with_newline(connection)
         
+        if len(self.connections) < 3:
+            streamstarting_response = {RESPONSE: STREAM_STARTING}
+            send_with_newline(connection, streamstarting_response)
+            self.connections.append(connection_with_address)
+        else:
+            overloaded_response = {RESPONSE: OVERLOADED, CLIENTS: [{'ip': client[1][0], 'port': client[1][1]} for client in self.connections]}
+            if self.mode == CARRIER:
+                address = self.broadcast_socket.getsockname()
+                overloaded_response |= {'server': {'ip': address[0], 'port': address[1]}}
+            send_with_newline(connection, overloaded_response)
+            exit()
         
-        if streamstart_request[REQUEST] == STREAM_START:
-            if len(self.connections) < 3:
-                streamstarting_response = {RESPONSE: STREAM_STARTING}
-                send_with_newline(connection, streamstarting_response)
-                self.connections.append(connection_with_address)
-            else:
-                overloaded_response = {RESPONSE: OVERLOADED, CLIENTS: [{'ip': client[1][0], 'port': client[1][1]} for client in self.connections]}
-                if self.mode == CARRIER:
-                    address = self.broadcast_socket.getsockname()
-                    overloaded_response |= {'server': {'ip': address[0], 'port': address[1]}}
-                send_with_newline(connection, overloaded_response)
-                exit()
 
         try:
-            StreamStop_Requeststop = receive_with_newline(connection)
+            streamstop_requeststop = receive_with_newline(connection)
         except ConnectionResetError:
             self.connections.remove(connection_with_address)
             exit()
-        except ConnectionAbortedError:
+        except (ConnectionAbortedError, OSError):
             exit()
 
         
-        if StreamStop_Requeststop[REQUEST] == STREAM_STOP:
-            streamstopped_response = {RESPONSE: STREAM_STOPPED}
-            send_with_newline(connection, streamstopped_response)
-            self.connections.remove(connection_with_address)
-            connection.close()
+        streamstopped_response = {RESPONSE: STREAM_STOPPED}
+        send_with_newline(connection, streamstopped_response)
+        self.connections.remove(connection_with_address)
+        connection.close()
     
     def accept_connections(self):
         while True:
@@ -186,15 +192,23 @@ class Broadcaster:
                 connection_with_address = self.broadcast_socket.accept()
             except OSError:
                 break
-            handling_request_thread = threading.Thread(
+            handling_request_thread = Thread(
                 target=self.handle_requests, args=(connection_with_address,))
             handling_request_thread.start()
     
     
     def start(self):
-        broacasting_thread = threading.Thread(target=self.broadcasting)
-        broacasting_thread.start()
+        self.broacasting_thread.start()
         self.accept_connections_thread.start()
+    
+    def stop(self):
+        self.stopped = True
+        self.broacasting_thread.join()
+        streamstopped_response = {RESPONSE: STREAM_STOPPED}
+        for connection, _ in self.connections:
+            send_with_newline(connection, streamstopped_response)
+            connection.close()
+        self.broadcast_socket.close()
 
 
 
@@ -202,8 +216,7 @@ class Carier(Broadcaster):
     def __init__(self, HOST, PORT):
         self.carry_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # type: ignore
         self.carry_socket.connect((HOST, PORT))
-        self.carry_thread = threading.Thread(target=self.carry)
-        self.stopped = False 
+        self.carry_thread = Thread(target=self.carry)
         
         super().__init__(*self.carry_socket.getsockname(), mode=CARRIER, capture_from=None)
 
@@ -224,14 +237,7 @@ class Carier(Broadcaster):
 
             
             if message[RESPONSE] == STREAM_STOPPED:
-                cv.destroyAllWindows()
-                for connection, _ in self.connections:
-                    connection.close()
-                self.carry_socket.close()
-                self.broadcast_socket.close()
-                if not self.stopped:
-                    print('the server stopped')
-                exit()
+                break
             
             image_str = message[DATA]
             
@@ -242,12 +248,19 @@ class Carier(Broadcaster):
             except:
                 pass
 
-            # To quit, press q
             if cv.waitKey(1) == ord('q'):
                 self.stopped = True
                 streamstop_request = {REQUEST: STREAM_STOP}
                 send_with_newline(self.carry_socket, streamstop_request)
-        
+            
+        cv.destroyAllWindows()
+        for connection, _ in self.connections:
+            connection.close()
+        self.carry_socket.close()
+        self.broadcast_socket.close()
+        if not self.stopped:
+            print('the server stopped')
+
 
 
     def handle_responses(self):
@@ -259,7 +272,6 @@ class Carier(Broadcaster):
         return streamstarting_response
 
 
-
     def start(self):
         streamstarting_response = self.handle_responses()
         if streamstarting_response[RESPONSE] == OVERLOADED:
@@ -267,8 +279,3 @@ class Carier(Broadcaster):
 
         self.carry_thread.start()
         self.accept_connections_thread.start()
-
-
-    def stop(self):
-        self.stopped = True
-        self.broadcast_socket.close()
